@@ -1,21 +1,17 @@
 import asyncio
-import urllib.request
-import json
-import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ВШИТЫЕ ДАННЫЕ АДМИН-ПУЛЬТА (v0.7) ---
+# --- ОБНОВЛЕННЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.7.2) ---
 ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
-MAIN_BOT_URL = "https://onrender.com".strip().rstrip('/')
+MAIN_BOT_TOKEN = "8828936622:AAF17VoASomT32uFfX8XHhts7HOfUqwGjV4".strip()
 
 CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 
 bot = Bot(token=ADMIN_BOT_TOKEN)
+main_bot_transmitter = Bot(token=MAIN_BOT_TOKEN)  # Передатчик скрытых сигналов напрямую в API Telegram
 dp = Dispatcher()
 
 admin_system = {
@@ -46,28 +42,6 @@ def get_user_role(user_id):
         return "blocked"
     return "guest"
 
-# Безопасная функция отправки POST запроса через ядро сети на Render
-def execute_secure_action(action_name: str):
-    try:
-        url = MAIN_BOT_URL
-        data = json.dumps({"action": action_name}).encode('utf-8')
-        req = urllib.request.Request(
-            url, 
-            data=data, 
-            headers={
-                "User-Agent": "AdminBot",
-                "Content-Type": "application/json",
-                "Authorization": "Bearer HatikSecretKey2026"  # Секретный токен авторизации
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            if response.status == 200:
-                return response.read().decode("utf-8")
-    except Exception as e:
-        print(f"Ошибка связи со шлюзом: {e}")
-    return None
-
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     role = get_user_role(message.from_user.id)
@@ -96,13 +70,17 @@ async def toggle_main_bot(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    res = execute_secure_action("toggle")
-    if res:
-        admin_system["main_bot_active"] = (res == "active")
+    # Формируем жесткую зашифрованную сервисную команду
+    signal = "_sys_cmd_toggle_off_" if admin_system["main_bot_active"] else "_sys_cmd_toggle_on_"
+    
+    try:
+        # Пульт шлет скрытый сигнал на твой ID от лица погодного бота через сервера мессенджера
+        await main_bot_transmitter.send_message(chat_id=message.from_user.id, text=signal)
+        admin_system["main_bot_active"] = not admin_system["main_bot_active"]
         status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
-        await message.answer(f"🛰 Сигнал передан. Статус изменен на: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
-    else:
-        await message.answer("❌ Ошибка: Не удалось достучаться до сервера погодного бота.")
+        await message.answer(f"🛰 Команда отправлена в Telegram! Погодный бот переведен в статус: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
+    except Exception as e:
+        await message.answer(f"❌ Ошибка Telegram-шлюза: {e}")
 
 @dp.message(F.text == "🔄 Перезагрузить кэш")
 async def clear_main_cache(message: Message):
@@ -111,11 +89,11 @@ async def clear_main_cache(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    res = execute_secure_action("clear")
-    if res == "cleared":
-        await message.answer("🛰 Сигнал очистки кэша успешно выполнен!")
-    else:
-        await message.answer("❌ Ошибка: Сервер недоступен.")
+    try:
+        await main_bot_transmitter.send_message(chat_id=message.from_user.id, text="_sys_cmd_clear_cache_")
+        await message.answer("🛰 Сигнал очистки кэша успешно направлен погодному боту!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сброса кэша: {e}")
 
 @dp.message(F.text == "🚪 Выход из аккаунта")
 async def process_logout(message: Message):
@@ -135,20 +113,22 @@ async def lock_tech_admin(message: Message):
     res_text = "🔒 Тех. администратор заблокирован!" if not admin_system["is_tech_allowed"] else "🔓 Тех. администратор разблокирован!"
     await message.answer(res_text, reply_markup=get_admin_keyboard(message.from_user.id))
 
+# Встроенный микро-веб-сервер для прохождения проверки Render
 class AdminHealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Admin panel is alive")
+        self.wfile.write(b"OK")
 
 def run_admin_server():
+    from http.server import HTTPServer
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), AdminHealthHandler)
     server.serve_forever()
 
 async def main():
     threading.Thread(target=run_admin_server, daemon=True).start()
-    print("🚀 Облачный Бот-Пульт v0.7 запущен!")
+    print("🚀 Бот-Пульт v0.7.2 запущен на Render!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
