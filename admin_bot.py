@@ -9,7 +9,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 from aiogram.filters import CommandStart
 
 # --- ВШИТЫЕ ДАННЫЕ АДМИН-ПУЛЬТА (v0.7) ---
-ADMIN_BOT_TOKEN = "8935836134:AAHHM50zxjn7xu0gu3zaNQWJWFdUBOjcl7M".strip()
+ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
 MAIN_BOT_URL = "https://onrender.com".strip().rstrip('/')
 
 CODE_OWNER = "H1A7T0I8K6"
