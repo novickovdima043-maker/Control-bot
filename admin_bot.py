@@ -3,7 +3,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ВШИТЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.6) ---
+# --- ВШИТЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.6.1) ---
 ADMIN_BOT_TOKEN = "8935836134:AAHHM50zxjn7xu0gu3zaNQWJWFdUBOjcl7M".strip()
 MAIN_BOT_TOKEN = "8828936622:AAEDwEvUNu7KA0sM_Jv4VNEP8CEalwnOH3g".strip()
 
@@ -11,7 +11,7 @@ CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 
 bot = Bot(token=ADMIN_BOT_TOKEN)
-main_bot_client = Bot(token=MAIN_BOT_TOKEN)  # Пульт шлет команды напрямую через API Telegram
+main_bot_client = Bot(token=MAIN_BOT_TOKEN)  # Клиент для отправки команд в погодный бот
 dp = Dispatcher()
 
 admin_system = {
@@ -70,15 +70,13 @@ async def toggle_main_bot(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    # Формируем скрытый сигнал
     signal = "_sys_toggle_off_" if admin_system["main_bot_active"] else "_sys_toggle_on_"
     
     try:
-        # Пульт сам пишет своему же погодному боту скрытую сервисную команду в личку админа!
+        # Отправляем скрытую команду напрямую по твоему Telegram ID (от лица погодного бота)
         await main_bot_client.send_message(chat_id=message.from_user.id, text=signal)
         admin_system["main_bot_active"] = not admin_system["main_bot_active"]
-        status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
-        await message.answer(f"📢 Команда передана! Погодный бот переведен в статус: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
+        await message.answer("🛰 Команда успешно передана через шлюз Telegram API!", reply_markup=get_admin_keyboard(message.from_user.id))
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки сигнала через Telegram API: {e}")
 
@@ -91,7 +89,7 @@ async def clear_main_cache(message: Message):
         
     try:
         await main_bot_client.send_message(chat_id=message.from_user.id, text="_sys_clear_cache_")
-        await message.answer("🔄 Сигнал очистки кэша успешно передан погодному боту!")
+        await message.answer("🛰 Сигнал очистки кэша успешно передан погодному боту!")
     except Exception as e:
         await message.answer(f"❌ Ошибка сброса кэша: {e}")
 
@@ -114,9 +112,8 @@ async def lock_tech_admin(message: Message):
     await message.answer(res_text, reply_markup=get_admin_keyboard(message.from_user.id))
 
 async def main():
-    print("🚀 Неубиваемый облачный Бот-Пульт v0.6 запущен!")
+    print("🚀 Облачный Бот-Пульт v0.6.1 запущен на Render!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
