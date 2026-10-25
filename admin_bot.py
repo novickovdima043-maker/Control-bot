@@ -1,33 +1,28 @@
-
 import asyncio
-import urllib.request
-import json
-import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ВШИТЫЕ ДАННЫЕ АДМИН-ПУЛЬТА (v0.5.1) ---
+# --- ВШИТЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.6) ---
 ADMIN_BOT_TOKEN = "8935836134:AAHHM50zxjn7xu0gu3zaNQWJWFdUBOjcl7M".strip()
-MAIN_BOT_URL = "https://onrender.com".strip().rstrip('/')
+MAIN_BOT_TOKEN = "8828936622:AAEDwEvUNu7KA0sM_Jv4VNEP8CEalwnOH3g".strip()
 
 CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 
 bot = Bot(token=ADMIN_BOT_TOKEN)
+main_bot_client = Bot(token=MAIN_BOT_TOKEN)  # Пульт шлет команды напрямую через API Telegram
 dp = Dispatcher()
 
 admin_system = {
     "owner_id": None,
     "tech_admin_id": None,
-    "is_tech_admin_allowed": True
+    "is_tech_admin_allowed": True,
+    "main_bot_active": True
 }
 
-# Кнопка статистики полностью удалена, добавлена кнопка Выхода
-def get_admin_keyboard(user_id, is_active=True):
-    status_text = "🔴 Выключить бота" if is_active else "🟢 Включить бота"
+def get_admin_keyboard(user_id):
+    status_text = "🔴 Выключить бота" if admin_system["main_bot_active"] else "🟢 Включить бота"
     allowed_text = "🔒 Блокировать тех. админа" if admin_system["is_tech_admin_allowed"] else "🔓 Разблокировать тех. админа"
     
     buttons = [
@@ -46,17 +41,6 @@ def get_user_role(user_id):
             return "tech_admin"
         return "blocked"
     return "guest"
-
-def send_command_to_main_bot(endpoint: str):
-    try:
-        url = f"{MAIN_BOT_URL}{endpoint}"
-        req = urllib.request.Request(url, headers={"User-Agent": "AdminBot"})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            if response.status == 200:
-                return response.read().decode("utf-8")
-    except Exception as e:
-        print(f"Ошибка шлюза связи: {e}")
-    return None
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -85,13 +69,18 @@ async def toggle_main_bot(message: Message):
     if role not in ["owner", "tech_admin"]:
         await message.answer("❌ Нет прав.")
         return
-    res = send_command_to_main_bot("/toggle")
-    if res:
-        is_active = (res == "active")
-        status_str = "ВКЛЮЧЕН" if is_active else "ВЫКЛЮЧЕН"
-        await message.answer(f"📢 Основной погодный бот успешно {status_str}!", reply_markup=get_admin_keyboard(message.from_user.id, is_active))
-    else:
-        await message.answer("❌ Не удалось связаться с сервером погодного бота.")
+        
+    # Формируем скрытый сигнал
+    signal = "_sys_toggle_off_" if admin_system["main_bot_active"] else "_sys_toggle_on_"
+    
+    try:
+        # Пульт сам пишет своему же погодному боту скрытую сервисную команду в личку админа!
+        await main_bot_client.send_message(chat_id=message.from_user.id, text=signal)
+        admin_system["main_bot_active"] = not admin_system["main_bot_active"]
+        status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
+        await message.answer(f"📢 Команда передана! Погодный бот переведен в статус: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки сигнала через Telegram API: {e}")
 
 @dp.message(F.text == "🔄 Перезагрузить кэш")
 async def clear_main_cache(message: Message):
@@ -99,60 +88,35 @@ async def clear_main_cache(message: Message):
     if role not in ["owner", "tech_admin"]:
         await message.answer("❌ Нет прав.")
         return
-    res = send_command_to_main_bot("/clear")
-    if res == "cleared":
-        await message.answer("🔄 Кэш погодных данных на сервере успешно сброшен!")
-    else:
-        await message.answer("❌ Сервер погодного бота недоступен.")
+        
+    try:
+        await main_bot_client.send_message(chat_id=message.from_user.id, text="_sys_clear_cache_")
+        await message.answer("🔄 Сигнал очистки кэша успешно передан погодному боту!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сброса кэша: {e}")
 
-# --- НОВАЯ ОПЕРАЦИЯ: ЛОГАУТ / ВЫХОД ИЗ СЕССИИ ---
 @dp.message(F.text == "🚪 Выход из аккаунта")
 async def process_logout(message: Message):
-    user_id = message.from_user.id
-    role = get_user_role(user_id)
-    
-    if role == "guest":
-        await message.answer("❌ Вы не авторизованы.")
-        return
-        
-    # Стираем сессию в зависимости от того, кто выходит
+    role = get_user_role(message.from_user.id)
     if role == "owner":
         admin_system["owner_id"] = None
-        print(f"LOG: Владелец {user_id} вышел из аккаунта.")
     elif role == "tech_admin":
         admin_system["tech_admin_id"] = None
-        print(f"LOG: Технический админ {user_id} вышел из аккаунта.")
-        
-    # Удаляем клавиатуру пульта и блокируем доступ
-    await message.answer(
-        "🔒 Вы успешно вышли из панели управления.\nСессия закрыта. Для повторного входа введите код-фразу:",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await message.answer("🔒 Вы успешно вышли. Введите код-фразу для входа:", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(F.text.in_({"🔒 Блокировать тех. админа", "🔓 Разблокировать тех. админа"}))
 async def lock_tech_admin(message: Message):
     if get_user_role(message.from_user.id) != "owner":
-        await message.answer("❌ Только Владелец (Hatik) может заблокировать тех. админа.")
+        await message.answer("❌ Отказано в доступе.")
         return
     admin_system["is_tech_admin_allowed"] = not admin_system["is_tech_admin_allowed"]
     res_text = "🔒 Тех. администратор заблокирован!" if not admin_system["is_tech_admin_allowed"] else "🔓 Тех. администратор разблокирован!"
     await message.answer(res_text, reply_markup=get_admin_keyboard(message.from_user.id))
 
-class AdminHealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Admin panel is alive")
-
-def run_admin_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), AdminHealthHandler)
-    server.serve_forever()
-
 async def main():
-    threading.Thread(target=run_admin_server, daemon=True).start()
-    print("🚀 Отдельный облачный Бот-Пульт успешно обновлен до v0.5.1!")
+    print("🚀 Неубиваемый облачный Бот-Пульт v0.6 запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
