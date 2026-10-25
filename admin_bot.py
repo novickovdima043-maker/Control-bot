@@ -1,9 +1,12 @@
 import asyncio
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ОБНОВЛЕННЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.7.2) ---
+# --- ВШИТЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v0.7.3) ---
 ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
 MAIN_BOT_TOKEN = "8828936622:AAF17VoASomT32uFfX8XHhts7HOfUqwGjV4".strip()
 
@@ -121,14 +124,13 @@ class AdminHealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
 def run_admin_server():
-    from http.server import HTTPServer
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), AdminHealthHandler)
     server.serve_forever()
 
 async def main():
     threading.Thread(target=run_admin_server, daemon=True).start()
-    print("🚀 Бот-Пульт v0.7.2 запущен на Render!")
+    print("🚀 Бот-Пульт v0.7.3 успешно запущен на Render!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
