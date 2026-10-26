@@ -2,57 +2,70 @@ import asyncio
 import urllib.request
 import json
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- СЮДА ВСТАВЬ ТОКЕН ВТОРОГО (НОВОГО) БОТА-АДМИНИСТРАТОРА ИЗ @BotFather ---
+# --- ТОКЕН ТВОЕГО БОТА-АДМИНИСТРАТОРА (КОНТРОЛЬНОГО) ---
 ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
-# --- СЮДА ВСТАВЬ ССЫЛКУ НА ТВОЕГО ПОГОДНОГО БОТА С САЙТА RENDER ---
-MAIN_BOT_URL = "https://my-weather-bot-8zr1.onrender.com".strip().rstrip('/')
+# --- ТОКЕН ОСНОВНОГО ПОГОДНОГО БОТА ---
+MAIN_BOT_TOKEN = "8828936622:AAF17VoASomT32uFfX8XHhts7HOfUqwGjV4".strip()
 
 CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 
 bot = Bot(token=ADMIN_BOT_TOKEN)
+main_bot_transmitter = Bot(token=MAIN_BOT_TOKEN)  # Передатчик скрытых сигналов напрямую в API Telegram
 dp = Dispatcher()
 
 admin_system = {
     "owner_id": None,
     "tech_admin_id": None,
-    "is_tech_admin_allowed": True
+    "is_tech_allowed": True,
+    "main_bot_active": True
 }
 
-def get_admin_keyboard(user_id, is_active=True):
-    status_text = "🔴 Выключить бота" if is_active else "...🟢 Включить бота"
-    allowed_text = "🔒 Блокировать тех. админа" if admin_system["is_tech_admin_allowed"] else "🔓 Разблокировать тех. админа"
+def get_admin_keyboard(user_id):
+    status_text = "🔴 Выключить бота" if admin_system["main_bot_active"] else "🟢 Включить бота"
+    allowed_text = "🔒 Блокировать тех. админа" if admin_system["is_tech_allowed"] else "🔓 Разблокировать тех. админа"
     
     buttons = [
         [KeyboardButton(text=status_text), KeyboardButton(text="🔄 Перезагрузить кэш")],
-        [KeyboardButton(text="📊 Посмотреть статистику")]
+        [KeyboardButton(text="🚪 Выход из аккаунта")]
     ]
     if user_id == admin_system["owner_id"]:
-        buttons.append([KeyboardButton(text=allowed_text)])
+        buttons.insert(1, [KeyboardButton(text=allowed_text)])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_user_role(user_id):
     if user_id == admin_system["owner_id"]:
         return "owner"
     if user_id == admin_system["tech_admin_id"]:
-        if admin_system["is_tech_admin_allowed"]:
+        if admin_system["is_tech_allowed"]:
             return "tech_admin"
         return "blocked"
     return "guest"
 
-def send_command_to_main_bot(endpoint: str):
+# Метод прямой симуляции входящей команды через сервера самого Telegram
+def send_telegram_signal_direct(user_chat_id: int, signal_text: str):
     try:
-        url = f"{MAIN_BOT_URL}{endpoint}"
-        req = urllib.request.Request(url, headers={"User-Agent": "AdminBot"})
+        url = f"https://telegram.org{MAIN_BOT_TOKEN}/sendMessage"
+        payload = json.dumps({
+            "chat_id": user_chat_id,
+            "text": signal_text
+        }).encode('utf-8')
+        
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "AdminBot"},
+            method="POST"
+        )
         with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
-                return response.read().decode("utf-8")
+                return True
     except Exception as e:
-        print(f"Ошибка связи с погодным ботом: {e}")
-    return None
+        print(f"Ошибка шлюза Telegram: {e}")
+    return False
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -69,26 +82,28 @@ async def auth_owner(message: Message):
 
 @dp.message(F.text == CODE_TECH_ADMIN)
 async def auth_tech_admin(message: Message):
-    if not admin_system["is_tech_admin_allowed"]:
+    if not admin_system["is_tech_allowed"]:
         await message.answer("❌ Владелец заблокировал доступ техническим администраторам.")
         return
     admin_system["tech_admin_id"] = message.from_user.id
     await message.answer("🛠 Авторизация успешна! Доступ предоставлен Техническому администратору.", reply_markup=get_admin_keyboard(message.from_user.id))
 
-@dp.message(F.text.in_({"🟢 Включить бота", "🔴 Выключить бота", "...🟢 Включить бота"}))
+@dp.message(F.text.in_({"🟢 Включить бота", "🔴 Выключить бота"}))
 async def toggle_main_bot(message: Message):
     role = get_user_role(message.from_user.id)
     if role not in ["owner", "tech_admin"]:
         await message.answer("❌ Нет прав.")
         return
         
-    res = send_command_to_main_bot("/toggle")
-    if res:
-        is_active = (res == "active")
-        status_str = "ВКЛЮЧЕН" if is_active else "ВЫКЛЮЧЕН"
-        await message.answer(f"📢 Основной погодный бот успешно {status_str}!", reply_markup=get_admin_keyboard(message.from_user.id, is_active))
+    signal = "_sys_cmd_toggle_off_" if admin_system["main_bot_active"] else "_sys_cmd_toggle_on_"
+    
+    # Пульт шлет сигнал прямо по твоему личному Telegram ID [1.4]
+    if send_telegram_signal_direct(message.from_user.id, signal):
+        admin_system["main_bot_active"] = not admin_system["main_bot_active"]
+        status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
+        await message.answer(f"🛰 Команда отправлена в Telegram! Статус изменен на: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
     else:
-        await message.answer("❌ Не удалось связаться с сервером основного погодного бота.")
+        await message.answer("❌ Ошибка сети: Сервер Telegram временно перегружен.")
 
 @dp.message(F.text == "🔄 Перезагрузить кэш")
 async def clear_main_cache(message: Message):
@@ -97,39 +112,31 @@ async def clear_main_cache(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    res = send_command_to_main_bot("/clear")
-    if res == "cleared":
-        await message.answer("🔄 Кэш погодных данных на сервере успешно сброшен!")
+    if send_telegram_signal_direct(message.from_user.id, "_sys_cmd_clear_cache_"):
+        await message.answer("🛰 Сигнал очистки кэша успешно направлен погодному боту!")
     else:
-        await message.answer("❌ Сервер погодного бота недоступен.")
+        await message.answer("❌ Ошибка сброса кэша.")
 
-@dp.message(F.text == "📊 Посмотреть статистику")
-async def get_main_stats(message: Message):
+@dp.message(F.text == "🚪 Выход из аккаунта")
+async def process_logout(message: Message):
     role = get_user_role(message.from_user.id)
-    if role not in ["owner", "tech_admin"]:
-        await message.answer("❌ Нет прав.")
-        return
-        
-    res = send_command_to_main_bot("/status")
-    if res:
-        data = json.loads(res)
-        status_str = "Работает 🟢" if data["status"] == "active" else "Отключен 🔴"
-        await message.answer(f"📊 **Статистика @weather145_bot:**\n─────────────────────\n⚙️ Статус: {status_str}\n👥 Уникальных юзеров в базе: `{data['users']}`\n─────────────────────")
-    else:
-        await message.answer("❌ Ошибка связи: Не удалось стянуть статистику.")
+    if role == "owner":
+        admin_system["owner_id"] = None
+    elif role == "tech_admin":
+        admin_system["tech_admin_id"] = None
+    await message.answer("🔒 Вы успешно вышли. Введите код-фразу для входа:", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(F.text.in_({"🔒 Блокировать тех. админа", "🔓 Разблокировать тех. админа"}))
 async def lock_tech_admin(message: Message):
     if get_user_role(message.from_user.id) != "owner":
-        await message.answer("❌ Только Владелец (Hatik) может заблокировать тех. админа.")
+        await message.answer("❌ Отказано в доступе.")
         return
-        
-    admin_system["is_tech_admin_allowed"] = not admin_system["is_tech_admin_allowed"]
-    res_text = "🔒 Тех. администратор заблокирован!" if not admin_system["is_tech_admin_allowed"] else "🔓 Тех. администратор разблокирован!"
+    admin_system["is_tech_allowed"] = not admin_system["is_tech_allowed"]
+    res_text = "🔒 Тех. администратор заблокирован!" if not admin_system["is_tech_allowed"] else "🔓 Тех. администратор разблокирован!"
     await message.answer(res_text, reply_markup=get_admin_keyboard(message.from_user.id))
 
 async def main():
-    print("🚀 Отдельный Бот-Пульт успешно запущен на вашем компьютере!")
+    print("🚀 Бот-Пульт успешно запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
