@@ -8,8 +8,10 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ТОКЕН ТВОЕГО БОТА-АДМИНИСТРАТОРА ---
+# --- ТОКЕН ТВОЕГО БОТА-АДМИНИСТРАТОРА (КОНТРОЛЬНОГО) ---
 ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
+# --- ТОКЕН ОСНОВНОГО ПОГОДНОГО БОТА ---
+MAIN_BOT_TOKEN = "8828936622:AAF17VoASomT32uFfX8XHhts7HOfUqwGjV4".strip()
 
 CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
@@ -17,7 +19,6 @@ CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 bot = Bot(token=ADMIN_BOT_TOKEN)
 dp = Dispatcher()
 
-# Оперативная память пульта (локальный кэш статуса)
 admin_system = {
     "owner_id": None,
     "tech_admin_id": None,
@@ -46,22 +47,26 @@ def get_user_role(user_id):
         return "blocked"
     return "guest"
 
-# Функция отправки нового глобального статуса в независимую базу данных KV
-def update_global_status_in_cloud(status_value: str):
+# Профессиональный обход: пульт заставляет самого погодного бота принудительно эмулировать входящее сообщение через Telegram API
+def send_telegram_signal_direct(user_chat_id: int, signal_text: str):
     try:
-        url = "https://kvly.top"
-        data = json.dumps({"status": status_value}).encode('utf-8')
+        url = f"https://telegram.org{MAIN_BOT_TOKEN}/sendMessage"
+        payload = json.dumps({
+            "chat_id": user_chat_id,
+            "text": signal_text
+        }).encode('utf-8')
+        
         req = urllib.request.Request(
-            url, 
-            data=data, 
+            url,
+            data=payload,
             headers={"Content-Type": "application/json", "User-Agent": "AdminBot"},
-            method="PUT"  # Перезаписываем ключ в облаке
+            method="POST"
         )
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
                 return True
     except Exception as e:
-        print(f"Ошибка сохранения в облачную базу: {e}")
+        print(f"Ошибка шлюза Telegram: {e}")
     return False
 
 @dp.message(CommandStart())
@@ -75,8 +80,6 @@ async def cmd_start(message: Message):
 @dp.message(F.text == CODE_OWNER)
 async def auth_owner(message: Message):
     admin_system["owner_id"] = message.from_user.id
-    # При входе по умолчанию синхронизируем пульт (считаем, что бот включен)
-    update_global_status_in_cloud("on")
     admin_system["main_bot_active"] = True
     await message.answer("👑 Авторизация успешна! Доступ предоставлен Владельцу (Hatik).", reply_markup=get_admin_keyboard(message.from_user.id))
 
@@ -95,18 +98,16 @@ async def toggle_main_bot(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    # Вычисляем новое состояние
-    new_status = "off" if admin_system["main_bot_active"] else "on"
+    # Формируем системный триггер
+    signal = "_sys_cmd_toggle_off_" if admin_system["main_bot_active"] else "_sys_cmd_toggle_on_"
     
-    # Сохраняем в независимую базу данных
-    if update_global_status_in_cloud(new_status):
+    # Отправляем напрямую в чат админа через Telegram API
+    if send_telegram_signal_direct(message.from_user.id, signal):
         admin_system["main_bot_active"] = not admin_system["main_bot_active"]
-        if admin_system["main_bot_active"]:
-            await message.answer("🟢 Погодный бот успешно переведен в статус: ВКЛЮЧЕН. Отправлено уведомление: 'Бот снова работает'", reply_markup=get_admin_keyboard(message.from_user.id))
-        else:
-            await message.answer("🔴 Погодный бот успешно переведен в статус: ВЫКЛЮЧЕН. Отправлено уведомление: 'Бот выключен по техническим обстоятельствам'", reply_markup=get_admin_keyboard(message.from_user.id))
+        status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
+        await message.answer(f"🛰 Команда успешно обработана сетью Telegram. Статус изменен на: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
     else:
-        await message.answer("❌ Критическая ошибка: Не удалось обновить триггер в базе данных KV. Попробуйте еще раз.")
+        await message.answer("❌ Ошибка сети: Сервер Telegram отклонил пакет управления. Проверьте, запущен ли основной бот.")
 
 @dp.message(F.text == "🔄 Перезагрузить кэш")
 async def clear_main_cache(message: Message):
@@ -114,7 +115,11 @@ async def clear_main_cache(message: Message):
     if role not in ["owner", "tech_admin"]:
         await message.answer("❌ Нет прав.")
         return
-    await message.answer("🛰 Сигнал очистки кэша будет применен автоматически при следующей генерации часового интервала.")
+        
+    if send_telegram_signal_direct(message.from_user.id, "_sys_cmd_clear_cache_"):
+        await message.answer("🛰 Пакет очистки кэша доставлен на сервера Telegram!")
+    else:
+        await message.answer("❌ Ошибка отправки пакета кэша.")
 
 @dp.message(F.text == "🚪 Выход из аккаунта")
 async def process_logout(message: Message):
@@ -134,7 +139,6 @@ async def lock_tech_admin(message: Message):
     res_text = "🔒 Тех. администратор заблокирован!" if not admin_system["is_tech_allowed"] else "🔓 Тех. администратор разблокирован!"
     await message.answer(res_text, reply_markup=get_admin_keyboard(message.from_user.id))
 
-# Веб-заглушка для прохождения проверки портов Render (Исправлено, NameError больше не будет)
 class AdminHealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -148,7 +152,7 @@ def run_admin_server():
 
 async def main():
     threading.Thread(target=run_admin_server, daemon=True).start()
-    print("🚀 Новый независимый Бот-Пульт v0.8 успешно запущен на Render!")
+    print("🚀 Корректный Бот-Пульт v0.8.1 успешно запущен на Render!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
