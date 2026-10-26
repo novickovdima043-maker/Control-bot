@@ -8,15 +8,15 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 
-# --- ТОКЕН ТВОЕГО БОТА-АДМИНИСТРАТОРА (КОНТРОЛЬНОГО) ---
+# --- ОБНОВЛЕННЫЕ ТОКЕНЫ ОБОИХ БОТОВ (v1.1) ---
 ADMIN_BOT_TOKEN = "8935836134:AAEiK0u9-10cKO4GaIB8n9xYSwulIQPX9Ug".strip()
-# --- ТОКЕН ОСНОВНОГО ПОГОДНОГО БОТА ---
 MAIN_BOT_TOKEN = "8828936622:AAF17VoASomT32uFfX8XHhts7HOfUqwGjV4".strip()
 
 CODE_OWNER = "H1A7T0I8K6"
 CODE_TECH_ADMIN = "M3I6S8H1K5O4"
 
 bot = Bot(token=ADMIN_BOT_TOKEN)
+main_bot_transmitter = Bot(token=MAIN_BOT_TOKEN)  # Передатчик сигналов напрямую в API Telegram
 dp = Dispatcher()
 
 admin_system = {
@@ -47,7 +47,6 @@ def get_user_role(user_id):
         return "blocked"
     return "guest"
 
-# Профессиональный обход: пульт заставляет самого погодного бота принудительно эмулировать входящее сообщение через Telegram API
 def send_telegram_signal_direct(user_chat_id: int, signal_text: str):
     try:
         url = f"https://telegram.org{MAIN_BOT_TOKEN}/sendMessage"
@@ -80,7 +79,6 @@ async def cmd_start(message: Message):
 @dp.message(F.text == CODE_OWNER)
 async def auth_owner(message: Message):
     admin_system["owner_id"] = message.from_user.id
-    admin_system["main_bot_active"] = True
     await message.answer("👑 Авторизация успешна! Доступ предоставлен Владельцу (Hatik).", reply_markup=get_admin_keyboard(message.from_user.id))
 
 @dp.message(F.text == CODE_TECH_ADMIN)
@@ -98,16 +96,14 @@ async def toggle_main_bot(message: Message):
         await message.answer("❌ Нет прав.")
         return
         
-    # Формируем системный триггер
     signal = "_sys_cmd_toggle_off_" if admin_system["main_bot_active"] else "_sys_cmd_toggle_on_"
     
-    # Отправляем напрямую в чат админа через Telegram API
     if send_telegram_signal_direct(message.from_user.id, signal):
         admin_system["main_bot_active"] = not admin_system["main_bot_active"]
         status_str = "ВКЛЮЧЕН" if admin_system["main_bot_active"] else "ВЫКЛЮЧЕН"
-        await message.answer(f"🛰 Команда успешно обработана сетью Telegram. Статус изменен на: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
+        await message.answer(f"🛰 Команда отправлена в Telegram! Статус изменен на: {status_str}", reply_markup=get_admin_keyboard(message.from_user.id))
     else:
-        await message.answer("❌ Ошибка сети: Сервер Telegram отклонил пакет управления. Проверьте, запущен ли основной бот.")
+        await message.answer("❌ Ошибка сети: Сервер Telegram отклонил пакет управления. Проверьте основного бота.")
 
 @dp.message(F.text == "🔄 Перезагрузить кэш")
 async def clear_main_cache(message: Message):
@@ -117,9 +113,9 @@ async def clear_main_cache(message: Message):
         return
         
     if send_telegram_signal_direct(message.from_user.id, "_sys_cmd_clear_cache_"):
-        await message.answer("🛰 Пакет очистки кэша доставлен на сервера Telegram!")
+        await message.answer("🛰 Сигнал очистки кэша успешно направлен погодному боту!")
     else:
-        await message.answer("❌ Ошибка отправки пакета кэша.")
+        await message.answer("❌ Ошибка сброса кэша.")
 
 @dp.message(F.text == "🚪 Выход из аккаунта")
 async def process_logout(message: Message):
@@ -152,7 +148,7 @@ def run_admin_server():
 
 async def main():
     threading.Thread(target=run_admin_server, daemon=True).start()
-    print("🚀 Корректный Бот-Пульт v0.8.1 успешно запущен на Render!")
+    print("🚀 Бот-Пульт v1.1 запущен на Render!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
